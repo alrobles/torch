@@ -30,15 +30,15 @@ jobs:
           - {os: macOS, r_version: '', version: cpu-m1, runner: [self-hosted, macOS, ARM64]}
 
           - {os: ubuntu, r_version: release, version: cpu, runner: ubuntu-22.04}
-          - {os: ubuntu, r_version: release, version: cu12.6, runner: [self-hosted, gpu-local]}
-
+          - {os: ubuntu, r_version: devel, version: cpu, runner: ubuntu-22.04}
           - {os: windows, r_version: release, version: cpu, runner: windows-latest}
-        
+
         include:
 
-          - config: {os: ubuntu, version: cu12.6}
-            container: {image: 'nvidia/cuda:12.6.3-cudnn-devel-ubuntu20.04', options: '--gpus all --runtime=nvidia'}
+          - config: {os: ubuntu, r_version: release, version: cu12.8, runner: [self-hosted, gpu-local]}
+            container: {image: 'nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04', options: '--gpus all --runtime=nvidia'}
             cuda_enabled: 1
+            torch_url: 'https://github.com/mlverse/libtorch-mac-m1/releases/download/LibTorch-for-R/libtorch-linux-cuda128-Release-x86_64-v2.8.0.zip'
 
     runs-on: ${{ matrix.config.runner }}
     container: ${{ matrix.container }}
@@ -50,6 +50,7 @@ jobs:
       TORCH_TEST: 1
       TORCH_INSTALL: 1
       TORCH_TEST_CUDA: ${{ matrix.cuda_enabled }}
+      TORCH_URL: ${{ matrix.torch_url }}
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
       GHA_USE_NODE_20: false
@@ -58,7 +59,7 @@ jobs:
 
       - name: Download lantern artifacts
         if: ${{ needs.lantern.result != 'skipped' }}
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           pattern: lantern-*
           path: '${{ runner.temp }}/'
@@ -70,13 +71,23 @@ jobs:
           echo "LANTERN_BASE_URL=${{ runner.temp }}/" >> $GITHUB_ENV
         shell: bash
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - if: ${{ env.TORCH_TEST_CUDA == 1 }}
         shell: bash
         run: |
           nvidia-smi
-      
+          echo "--- LD_LIBRARY_PATH ---"
+          echo "${LD_LIBRARY_PATH:-<not set>}"
+          echo "--- CUDA libs ---"
+          ls /usr/local/cuda/lib64/libcudart* /usr/local/cuda/lib64/libcublas* 2>/dev/null || echo "not found in /usr/local/cuda/lib64"
+          ldconfig -p | grep -E "libcudart|libcublas" || echo "not in ldconfig cache"
+
+      - name: Set LD_LIBRARY_PATH for CUDA
+        if: ${{ env.TORCH_TEST_CUDA == 1 }}
+        run: echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> $GITHUB_ENV
+        shell: bash
+
       - uses: ./.github/actions/setup-r
         with:
           r_version: ${{ matrix.config.r_version}}
@@ -101,7 +112,82 @@ jobs:
         with:
           error-on: '"error"'
           args: 'c("--no-multiarch", "--no-manual", "--as-cran")'
-        
 
-      
-      
+  check-cudatoolkit:
+    needs: lantern
+    if: ${{ always() && needs.lantern.result != 'failed' }}
+    runs-on: [self-hosted, gpu-local]
+    container:
+      image: nvidia/cuda:12.8.1-base-ubuntu22.04
+      options: '--gpus all --runtime=nvidia'
+    name: "cudatoolkit - cuda12.8"
+    timeout-minutes: 120
+    env:
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      TORCH_TEST: 1
+      TORCH_INSTALL: 1
+      TORCH_TEST_CUDA: 1
+      CUDA: "12.8"
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      DEBIAN_FRONTEND: noninteractive
+      R_ALWAYS_INSTALL_TESTS: true
+      TORCH_URL: 'https://github.com/mlverse/libtorch-mac-m1/releases/download/LibTorch-for-R/libtorch-linux-cuda128-Release-x86_64-v2.8.0.zip'
+
+    steps:
+
+      - name: Install system dependencies
+        run: |
+          apt-get update -y
+          apt-get install -y \
+            sudo software-properties-common dialog apt-utils \
+            tzdata locales curl wget git \
+            libcurl4-openssl-dev libssl-dev libxml2-dev \
+            libfontconfig1-dev libfreetype6-dev libpng-dev \
+            libharfbuzz-dev libfribidi-dev libtiff5-dev libjpeg-dev \
+            cmake make gcc g++
+
+      - name: Verify GPU access
+        run: nvidia-smi
+
+      - name: Download lantern artifacts
+        if: ${{ needs.lantern.result != 'skipped' }}
+        uses: actions/download-artifact@v7
+        with:
+          pattern: lantern-*
+          path: '${{ runner.temp }}/'
+          merge-multiple: true
+
+      - name: Set base URL for downloading
+        if: ${{ needs.lantern.result != 'skipped' }}
+        run: |
+          echo "LANTERN_BASE_URL=${{ runner.temp }}/" >> $GITHUB_ENV
+        shell: bash
+
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-r
+        with:
+          r_version: release
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache: false
+
+      - name: Install cuda12.8 R package
+        run: |
+          Rscript -e "pak::pkg_install('mlverse/cudatoolkit/cuda12.8')"
+
+      - name: Install package
+        run: |
+          Rscript -e "pak::local_install()"
+
+      - name: Session info
+        run: |
+          Rscript -e "sessionInfo()"
+          Rscript -e "cat('CUDA lib path:', cuda12.8::lib_path(), '\n')"
+          Rscript -e "cat('Libs:', list.files(cuda12.8::lib_path(), pattern = '\\\\.so'), '\n')"
+
+      - name: Run tests
+        run: |
+          Rscript -e "testthat::test_package('torch')"
+

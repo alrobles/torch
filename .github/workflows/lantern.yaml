@@ -19,11 +19,11 @@ jobs:
           # when changing supported versions here, please modify supported versions
           # in install.R
           - {os: macOS, version: cpu-intel, runner: macos-15-intel}
-          - {os: macOS, version: cpu-m1, runner: [self-hosted, m1]}
+          - {os: macOS, version: cpu-m1, runner: macos-15}
           
           - {os: ubuntu, version: cpu, runner: ubuntu-latest}
-          - {os: ubuntu, version: cu12.6, runner: [self-hosted, linux]}
-          - {os: ubuntu, version: cu12.8, runner: [self-hosted, linux]}
+          - {os: ubuntu, version: cu12.6, runner: ubuntu-22.04}
+          - {os: ubuntu, version: cu12.8, runner: ubuntu-22.04}
 
           - {os: windows, version: cpu, runner: windows-2022}
           - {os: windows, version: cu12.6, runner: windows-2022}
@@ -54,7 +54,7 @@ jobs:
           curl -fsSL https://get.docker.com -o get-docker.sh
           DRY_RUN=1 sh ./get-docker.sh
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v2
@@ -93,7 +93,7 @@ jobs:
 
       - id: artifact
         if: ${{ github.workflow == 'Test' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.build.outputs.fname }}
           path: 'src/lantern/build/${{ steps.build.outputs.fname }}'

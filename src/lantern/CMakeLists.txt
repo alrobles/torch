@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.19.2)
 project(lantern)
 
-set(TORCH_VERSION "2.7.1")
+set(TORCH_VERSION "2.8.0")
 
 if (NOT DEFINED TORCH_PATH)
     if (DEFINED ENV{TORCH_PATH})
@@ -44,9 +44,9 @@ if (NOT EXISTS "${TORCH_PATH}")
             endif()
         elseif(UNIX)
             if (DEFINED CUDA_VERSION_NUMBER)
-                set(TORCH_URL "https://download.pytorch.org/libtorch/cu${CUDA_VERSION_NUMBER}/libtorch-cxx11-abi-shared-with-deps-${TORCH_VERSION}%2Bcu${CUDA_VERSION_NUMBER}.zip")
+                set(TORCH_URL "https://download.pytorch.org/libtorch/cu${CUDA_VERSION_NUMBER}/libtorch-shared-with-deps-${TORCH_VERSION}%2Bcu${CUDA_VERSION_NUMBER}.zip")
             else()
-                set(TORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${TORCH_VERSION}%2Bcpu.zip")
+                set(TORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-shared-with-deps-${TORCH_VERSION}%2Bcpu.zip")
             endif()
         endif()
     endif()
@@ -230,11 +230,32 @@ option(BUNDLE_DEPENDENCIES "On or off" OFF)
 if (BUNDLE_DEPENDENCIES)
     install(DIRECTORY ${TORCH_PATH} DESTINATION .)
     install(TARGETS lantern RUNTIME_DEPENDENCY_SET lantern_deps)
-    install(RUNTIME_DEPENDENCY_SET lantern_deps 
-		        DESTINATION lib
-		        DIRECTORIES "${TORCH_PATH}/lib/" "${CUDA_TOOLKIT_ROOT_DIR}/bin/"
-		        UNRESOLVED_DEPENDENCIES_VAR unresolved_deps
-		)
+    install(RUNTIME_DEPENDENCY_SET lantern_deps
+        DESTINATION lib
+        DIRECTORIES "${TORCH_PATH}/lib/" "${CUDA_TOOLKIT_ROOT_DIR}/bin/"
+        # Exclude glibc libraries - these must come from the host system.
+        # Bundling glibc causes ABI conflicts because GLIBC_PRIVATE symbols
+        # are unstable across versions. The build environment (Ubuntu 20.04,
+        # glibc 2.31) differs from many target systems (e.g., Ubuntu 24.04,
+        # glibc 2.39), causing "undefined symbol: _dl_catch_error" errors.
+        PRE_EXCLUDE_REGEXES
+            "^libc\\.so"
+            "^libc-"
+            "^libdl\\.so"
+            "^libdl-"
+            "^libpthread\\.so"
+            "^libpthread-"
+            "^librt\\.so"
+            "^librt-"
+            "^libm\\.so"
+            "^libm-"
+            "^ld-linux"
+        POST_EXCLUDE_REGEXES
+            "^/lib/"
+            "^/lib64/"
+            "^/usr/lib/"
+        UNRESOLVED_DEPENDENCIES_VAR unresolved_deps
+    )
 endif()
 
 ############################################################
